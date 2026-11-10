@@ -1,0 +1,12 @@
+.engine-label{display:block;margin-top:2px;font:8px var(--mono);letter-spacing:.45px;color:#839179}
+.decision-log{margin-top:12px;padding:11px 12px;border:1px solid #e8e7e0;border-radius:8px;background:#fbfaf6}
+.decision-log-title{display:flex;justify-content:space-between;font:8px var(--mono);letter-spacing:1px;color:#93958a;padding-bottom:7px;border-bottom:1px solid #eeede6}
+.decision-log-title span{letter-spacing:0}
+.decision-log-row{display:flex;align-items:center;gap:8px;padding-top:9px;color:#698167}
+.decision-log-row>span{width:18px;height:18px;border-radius:50%;display:grid;place-items:center;background:#edf3eb;flex:none}
+.decision-log-row.rejected{color:#9a8a7d}
+.decision-log-row.rejected>span{background:#f2f0eb}
+.decision-log-row>div{display:flex;flex-direction:column;gap:2px;min-width:0}
+.decision-log-row strong{font-size:9px}
+.decision-log-row small{font-size:9px;color:#929389;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.decision-log-row button{margin-left:auto;border:0;background:none;color:#8d8f84;text-decoration:underline;font-size:9px}
