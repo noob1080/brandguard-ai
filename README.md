@@ -22,6 +22,7 @@ The sample workspace loads a ten-rule guide and a draft with deliberate issues s
 - **Retrieval:** Analysis retrieves up to the three most relevant passages from the active guide before grading.
 - **Grading:** With `OPENAI_API_KEY`, LangChain requests structured findings from the configured model. The backend verifies each citation against retrieved text and the matched phrase against the draft. Without a key, the API uses a deterministic rule matcher. The static demo uses its own deterministic browser checker; it does not make LLM or ChromaDB calls.
 - **Human review:** Accept applies the replacement; reject leaves the draft intact. After review, the editable final output can be exported as PDF, TXT, or DOCX. The current draft is saved in browser storage.
+- **Round 3 depth:** Citation checks expose the exact matched source rule; the backend includes a top-k retrieval benchmark; and the creator can compare and restore locally saved draft and decision versions.
 
 ## Run locally
 
@@ -55,14 +56,15 @@ The central proposed loop—rule ingestion, retrieval, grounded findings, citati
 
 This is a single-workspace prototype. It does not yet include authentication, isolated multi-company data, or persistent decision history. The public static demo does not host FastAPI or ChromaDB; use the local setup above for the full backend path.
 
-## Proposed Round 3 improvements
+## Round 3 improvements implemented
 
-1. **More reliable rule retrieval:** build a small evaluation set of drafts and expected rules, verify relevant passages appear in the top three results, and improve chunking/search when they do not.
-2. **Explainable AI feedback:** extend the existing exact-citation check with source-span anchors so each finding can point to and highlight the precise rule in the uploaded guide.
-3. **Non-destructive revision management:** save draft versions and each accept/reject decision in SQLite, then let the creator compare, undo, and restore a version.
+1. **Retrieval quality benchmark:** the review workspace can measure whether expected guideline chunks appear in the top three ChromaDB results, reporting recall@3 and mean reciprocal rank. When the backend is unavailable, the demo runs its deterministic local benchmark.
+2. **Citation verification:** findings include a verified citation and source span, and creators can inspect the exact rule behind a suggestion before deciding.
+3. **Versioned review history:** draft versions and accept/reject decisions can be compared and restored from browser storage on the same device. This prototype does not yet sync history across devices or use SQLite for revision storage.
 
-These three Round 3 improvements match the retrieval, citation, and revision goals in the Round 1 presentation. The current browser demo remains a deterministic local checker; ChromaDB retrieval and optional LLM grading are available when the FastAPI backend is running. The public static app does not currently host that backend.
+The browser demo remains a deterministic local checker; ChromaDB retrieval and optional LLM grading are available when the FastAPI backend is running. The public static app does not currently host that backend.
 
 ## Deploy the browser demo to Vercel
 
 Import this repository into Vercel from its root directory. `vercel.json` installs the frontend dependencies, builds the Vite app, and publishes the generated `dist` folder. This deploys the browser demo only; it does not host FastAPI, ChromaDB, or the optional LLM service.
+

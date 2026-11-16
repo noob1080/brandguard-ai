@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowDown, ArrowLeft, ArrowRight, Check, CheckCheck, ChevronDown, CircleHelp, Clock3, Copy, Download, FileText, LoaderCircle, RotateCcw, ShieldCheck, Sparkles, Upload, X } from 'lucide-react'
+import { ArrowDown, ArrowLeft, ArrowRight, Check, CheckCheck, ChevronDown, CircleHelp, Clock3, Copy, Download, FileText, History, LoaderCircle, RotateCcw, SearchCheck, ShieldCheck, Sparkles, Upload, X } from 'lucide-react'
 import { createPdfFile, createWordFile, downloadFile, safeExportName } from './exporters.js'
 
 const DEMO_GUIDE = `Always capitalize “Midnight Owls”. The name represents our community and must never appear in lowercase.
@@ -31,7 +31,7 @@ function localChunks(text,source){return text.split(/\n\s*\n|\n/).map(s=>s.trim(
 
 function localAnalysis(draft,guides){
   const findings=[];const seen=new Set()
-  const add=(category,severity,match,suggested,explanation,guide)=>{const key=`${match.index}:${match[0].toLowerCase()}`;if(seen.has(key))return;seen.add(key);findings.push({id:key,category,severity,original_text:match[0],suggested_text:suggested,explanation,guideline:guide.text,source:`${guide.source} · rule ${guide.chunk}`,start:match.index,end:match.index+match[0].length})}
+  const add=(category,severity,match,suggested,explanation,guide)=>{const key=`${match.index}:${match[0].toLowerCase()}`;if(seen.has(key))return;seen.add(key);findings.push({id:key,category,severity,original_text:match[0],suggested_text:suggested,explanation,guideline:guide.text,source:`${guide.source} · rule ${guide.chunk}`,start:match.index,end:match.index+match[0].length,citation_verified:true,source_start:0,source_end:guide.text.length})}
   for(const guide of guides){const text=guide.text
     const bannedRule=text.match(/(?:never\s+(?:say|use)(?:\s+the\s+word)?|avoid(?:\s+the\s+word)?|never\s+call\s+(?:a\s+\w+\s+)?)[\s"'“‘]*([\w-]+)/i)||text.match(/never\s+(?:promise|claim|guarantee)\s+(?:\d{1,3}%\s+)?["'“‘]*([\w-]+)/i)
     if(bannedRule){const banned=bannedRule[1];const tail=text.slice(bannedRule.index+bannedRule[0].length);const alternative=tail.match(/(?:;|,)\s*(?:instead\s+)?(?:say|use|write|prefer)\s+["'“‘]*([\w-]+)|\b(?:say|use|write|prefer)\s+["'“‘]*([\w-]+)\s+(?:instead|rather than|in place of)\b|\binstead\s*,?\s*(?:say|use|write|prefer)\s+["'“‘]*([\w-]+)/i);const termPattern=banned.toLowerCase().startsWith('guarantee')?/\bguarantee(?:s|d)?\b/ig:new RegExp(`\\b${banned.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}\\b`,'ig');const suggested=alternative?.[1]||alternative?.[2]||alternative?.[3]||LOCAL_REPLACEMENTS[banned.toLowerCase()]||'a more specific description';for(const m of draft.matchAll(termPattern))add('Terminology',alternative?'high':'medium',m,suggested,`Use “${suggested}” in place of “${m[0]}” to follow this approved rule.`,guide)}
@@ -59,19 +59,26 @@ function App() {
   const [demoMode,setDemoMode]=useState(true)
   const [openMenu,setOpenMenu]=useState('')
   const [showHelp,setShowHelp]=useState(false)
+  const [versions,setVersions]=useState(()=>{try{return JSON.parse(localStorage.getItem('brandguard-versions')||'[]')}catch{return []}})
+  const [versionDialog,setVersionDialog]=useState(null)
+  const [sourceFinding,setSourceFinding]=useState(null)
+  const [retrievalDialog,setRetrievalDialog]=useState(false)
+  const [retrievalBusy,setRetrievalBusy]=useState(false)
+  const [retrievalReport,setRetrievalReport]=useState(null)
   const draftFileRef=useRef(null)
   const draftRef=useRef(null)
   const textareaRef=useRef(null)
 
   useEffect(()=>{
     const closeOnOutside=(event)=>{if(!event.target.closest('[data-popover-root]'))setOpenMenu('')}
-    const closeOnEscape=(event)=>{if(event.key==='Escape'){setOpenMenu('');setShowHelp(false)}}
+    const closeOnEscape=(event)=>{if(event.key==='Escape'){setOpenMenu('');setShowHelp(false);setVersionDialog(null);setSourceFinding(null);setRetrievalDialog(false)}}
     document.addEventListener('pointerdown',closeOnOutside)
     document.addEventListener('keydown',closeOnEscape)
     return()=>{document.removeEventListener('pointerdown',closeOnOutside);document.removeEventListener('keydown',closeOnEscape)}
   },[])
 
   useEffect(()=>{localStorage.setItem('rulebook-draft',draft)},[draft])
+  useEffect(()=>{localStorage.setItem('brandguard-versions',JSON.stringify(versions))},[versions])
   useEffect(()=>{ fetch('/api/health').then(async r=>{if(!r.ok)return null;const health=await r.json();if(!health?.ok)return null;setBackendAvailable(true);return fetch('/api/guidelines')}).then(r=>r?.ok?r.json():null).then(d=>{if(d?.guidelines?.length){setRules(d.guidelines);setFilename(d.guidelines[0].source);setDemoMode(false)}}).catch(()=>{}) },[])
 
   const decidedCount=Object.keys(decisions).length
@@ -102,6 +109,7 @@ function App() {
 
   async function uploadScript(file){
     if(!file)return
+    saveVersion('Before uploading a new draft')
     setError('');setNotice('')
     setStatus('uploading')
     try{if(!/\.(txt|md)$/i.test(file.name))throw new Error('Choose a .txt or .md script file.');if(file.size>1_000_000)throw new Error('Keep script files under 1 MB.');const text=await file.text();if(!text.trim())throw new Error('This script file is empty.');setDraft(text);setDraftName(file.name.replace(/\.[^.]+$/,'')||'Draft Workspace');setFindings([]);setDecisions({});setNotice(`${file.name} is ready to review.`)}catch(e){setError(e.message||'Could not read this script file.')}finally{setStatus('ready');setOpenMenu('')}
@@ -109,7 +117,34 @@ function App() {
 
   function handleScriptDrop(event){event.preventDefault();setIsDraggingScript(false);uploadScript(event.dataTransfer.files?.[0])}
 
-  function clearDraft(){setDraft('');setDraftName('Draft Workspace');setFindings([]);setDecisions({});setFinalOutputEdited(false);setStatus('ready');setError('');setNotice('Draft cleared.');setOpenMenu('')}
+  function clearDraft(){saveVersion('Before clearing draft');setDraft('');setDraftName('Draft Workspace');setFindings([]);setDecisions({});setFinalOutputEdited(false);setStatus('ready');setError('');setNotice('Draft cleared.');setOpenMenu('')}
+
+  function saveVersion(label){
+    if(!draft.trim())return
+    const entry={id:`${Date.now()}-${Math.random().toString(16).slice(2,7)}`,label,createdAt:new Date().toISOString(),draft,decisions,findings,draftName}
+    setVersions(prev=>[entry,...prev].slice(0,15))
+  }
+
+  function restoreVersion(version){
+    setDraft(version.draft);setDraftName(version.draftName||'Draft Workspace');setFindings(version.findings||[]);setDecisions(version.decisions||{});setStatus(version.findings?.length?'complete':'ready');setFinalOutputEdited(false);setVersionDialog(null);setNotice(`Restored “${version.label}”.`)
+  }
+
+  async function runRetrievalEvaluation(){
+    if(!rules.length)return
+    setRetrievalBusy(true);setRetrievalReport(null)
+    const stop=new Set(['always','never','avoid','the','and','or','to','a','an','of','in','for','with','when','must','should','instead','use','say','write','your','our','brand','rule','this','that','from','every','word','be'])
+    const tokens=text=>(text.toLowerCase().match(/[a-z0-9][a-z0-9'-]*/g)||[]).filter(t=>t.length>2&&!stop.has(t))
+    const cases=rules.map(rule=>({query:tokens(rule.text).slice(0,8).join(' ')||rule.text.slice(0,80),expected_chunk:rule.chunk}))
+    try{
+      let report
+      if(backendAvailable){const response=await fetch('/api/evaluate-retrieval',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cases,top_k:3})});if(!response.ok)throw new Error('The retrieval evaluation endpoint is unavailable.');report=await response.json();report.mode='ChromaDB top-3'}
+      else{
+        const rows=cases.map((test,index)=>{const query=new Set(tokens(test.query));const ranked=rules.map((candidate,rank)=>({candidate,score:tokens(candidate.text).reduce((n,t)=>n+(query.has(t)?1:0),0)/Math.max(1,query.size),rank})).sort((a,b)=>b.score-a.score||a.rank-b.rank);const position=ranked.findIndex(x=>x.candidate.id===rules[index].id);return{query:test.query,expected_chunk:test.expected_chunk,rank:position<3?position+1:null,retrieved:ranked.slice(0,3).map(x=>({chunk:x.candidate.chunk,text:x.candidate.text}))}})
+        const hits=rows.filter(row=>row.rank);report={cases:rows,case_count:rows.length,mrr:Number((rows.reduce((n,row)=>n+(row.rank?1/row.rank:0),0)/rows.length).toFixed(3)),recall_at_3:Number((hits.length/rows.length).toFixed(3)),mode:'Browser lexical baseline'}
+      }
+      setRetrievalReport(report)
+    }catch(e){setRetrievalReport({error:e.message||'Could not evaluate retrieval.'})}finally{setRetrievalBusy(false)}
+  }
 
   function exportFinalText(){downloadFile(new Blob(['\ufeff',draft],{type:'text/plain;charset=utf-8'}),`${safeExportName(draftName)}.txt`)}
   function exportFinalWord(){downloadFile(createWordFile(draft),`${safeExportName(draftName)}.docx`)}
@@ -118,6 +153,7 @@ function App() {
   async function analyzeDraft(){
     if(!draft.trim())return
     setError('');setNotice('');setStatus('analyzing');setDecisions({});setFinalOutputEdited(false)
+    saveVersion('Before analysis')
     if(demoMode){await new Promise(r=>setTimeout(r,250));setFindings(localAnalysis(draft,rules));setEngine('browser-demo');setStatus('complete');return}
     if(!backendAvailable){setFindings(localAnalysis(draft,rules));setEngine('browser-local');setStatus('complete');return}
     try { const res=await fetch('/api/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({draft,top_k:3})});const data=await res.json();if(!res.ok)throw new Error(data.detail||'Analysis failed.');setFindings(data.findings);setEngine(data.engine||'chromadb-rules');setStatus('complete') }
@@ -125,6 +161,7 @@ function App() {
   }
 
   function decide(finding,decision){
+    saveVersion(`${decision==='accepted'?'Before accepting':'Before rejecting'} · ${finding.original_text}`)
     setDecisions(prev=>({...prev,[finding.id]:decision}))
     if(decision==='accepted'){
       setDraft(prev=>{
@@ -137,6 +174,7 @@ function App() {
   }
 
   function applyAll(){
+    saveVersion('Before accepting all suggestions')
     const pending=findings.filter(f=>!decisions[f.id]).sort((a,b)=>b.start-a.start)
     let next=draft
     pending.forEach(f=>{const current=next.slice(f.start,f.end);if(current.toLowerCase()===f.original_text.toLowerCase())next=next.slice(0,f.start)+f.suggested_text+next.slice(f.end)})
@@ -144,7 +182,7 @@ function App() {
   }
 
   function resetReview(){setFindings([]);setDecisions({});setFinalOutputEdited(false);setStatus('ready');setError('')}
-  function undoDecision(finding){if(decisions[finding.id]==='accepted'){setDraft(prev=>{const at=prev.indexOf(finding.suggested_text);return at<0?prev:prev.slice(0,at)+finding.original_text+prev.slice(at+finding.suggested_text.length)})}setDecisions(prev=>{const next={...prev};delete next[finding.id];return next})}
+  function undoDecision(finding){saveVersion(`Before undoing · ${finding.original_text}`);if(decisions[finding.id]==='accepted'){setDraft(prev=>{const at=prev.indexOf(finding.suggested_text);return at<0?prev:prev.slice(0,at)+finding.original_text+prev.slice(at+finding.suggested_text.length)})}setDecisions(prev=>{const next={...prev};delete next[finding.id];return next})}
 
   const resultMessage=decidedCount===findings.length&&findings.length>0?'Review complete — your final say is what counts.':`${findings.length} suggestions are ready for your review.`
 
@@ -173,7 +211,7 @@ function App() {
         {guidelinesPanel}
         <section className="editor-column" aria-label="Draft editor">
           <div className="section-topline"><div><span className="step-index">02</span><span className="section-label">YOUR DRAFT</span></div></div>
-          <div className={`draft-card ${isDraggingScript?'is-dragging':''}`} ref={draftRef} onDragEnter={e=>{e.preventDefault();setIsDraggingScript(true)}} onDragOver={e=>e.preventDefault()} onDragLeave={e=>{if(!e.currentTarget.contains(e.relatedTarget))setIsDraggingScript(false)}} onDrop={handleScriptDrop}><div className="draft-card-head"><div className="draft-title-wrap"><div className="doc-icon"><FileText size={17}/></div><div><div className="draft-title">{draftName}</div><div className="draft-meta">Content script <span>·</span> Edited just now</div></div></div><div className="draft-actions"><input ref={draftFileRef} className="visually-hidden" type="file" accept=".txt,.md,text/plain,text/markdown" aria-hidden="true" tabIndex={-1} onChange={e=>{uploadScript(e.target.files?.[0]);e.target.value=''}}/><button className="script-upload-button" onClick={()=>draftFileRef.current?.click()} disabled={status==='uploading'}>{status==='uploading'?<LoaderCircle className="spin" size={14}/>:<Upload size={14}/>} Upload script</button><button className="clear-draft-button" onClick={clearDraft} disabled={status==='uploading'}><X size={14}/> Clear draft</button></div></div><textarea ref={textareaRef} aria-label="Draft content" value={draft} onChange={e=>{setDraft(e.target.value);if(status==='complete')resetReview()}} placeholder="Paste your campaign copy here or upload a script file..."/><div className="draft-card-foot"><span>{words} words <span>·</span> {draft.length} characters</span><span className="autosave"><span/> Saved locally</span></div>{isDraggingScript&&<div className="drop-overlay"><span><Upload size={18}/> Drop a .txt or .md script</span></div>}</div>
+          <div className={`draft-card ${isDraggingScript?'is-dragging':''}`} ref={draftRef} onDragEnter={e=>{e.preventDefault();setIsDraggingScript(true)}} onDragOver={e=>e.preventDefault()} onDragLeave={e=>{if(!e.currentTarget.contains(e.relatedTarget))setIsDraggingScript(false)}} onDrop={handleScriptDrop}><div className="draft-card-head"><div className="draft-title-wrap"><div className="doc-icon"><FileText size={17}/></div><div><div className="draft-title">{draftName}</div><div className="draft-meta">Content script <span>·</span> Edited just now</div></div></div><div className="draft-actions"><input ref={draftFileRef} className="visually-hidden" type="file" accept=".txt,.md,text/plain,text/markdown" aria-hidden="true" tabIndex={-1} onChange={e=>{uploadScript(e.target.files?.[0]);e.target.value=''}}/><button className="script-upload-button" onClick={()=>draftFileRef.current?.click()} disabled={status==='uploading'}>{status==='uploading'?<LoaderCircle className="spin" size={14}/>:<Upload size={14}/>} Upload script</button><button className="clear-draft-button" onClick={clearDraft} disabled={status==='uploading'}><X size={14}/> Clear draft</button></div></div><textarea ref={textareaRef} aria-label="Draft content" value={draft} onFocus={()=>saveVersion('Before manual draft edit')} onChange={e=>{setDraft(e.target.value);if(status==='complete')resetReview()}} placeholder="Paste your campaign copy here or upload a script file..."/><div className="draft-card-foot"><span>{words} words <span>·</span> {draft.length} characters</span><span className="autosave"><span/> Saved locally</span></div>{isDraggingScript&&<div className="drop-overlay"><span><Upload size={18}/> Drop a .txt or .md script</span></div>}</div>
           <div className="analyze-row"><div className="analyze-hint"><Sparkles size={15}/> Checks against your approved guide</div><button className="analyze-button" disabled={!draft.trim()||status==='analyzing'||status==='uploading'} onClick={analyzeDraft}>{status==='analyzing'?<><LoaderCircle className="spin" size={17}/> Checking draft...</>:<>Analyze draft <ArrowRight size={16}/></>}</button></div>
           {error&&<div className="error-banner" role="alert"><X size={15}/>{error}</div>}
           {notice&&<div className="notice-banner"><Check size={15}/>{notice}<button onClick={()=>setNotice('')} aria-label="Dismiss"><X size={14}/></button></div>}
@@ -181,12 +219,12 @@ function App() {
           <div className="privacy-note"><ShieldCheck size={15}/><span>Your draft stays yours. No edits are made until you accept a suggestion.</span></div>
         </section>
 
-        <aside className="review-column" aria-label="Review suggestions"><div className="section-topline review-topline">{status==='complete'&&<button className="back-to-draft" onClick={resetReview}><ArrowLeft size={14}/> Back to draft</button>}<div><span className="step-index">03</span><span className="section-label">FINDINGS & DECISIONS</span></div></div>
+        <aside className="review-column" aria-label="Review suggestions"><div className="section-topline review-topline">{status==='complete'&&<button className="back-to-draft" onClick={resetReview}><ArrowLeft size={14}/> Back to draft</button>}<div><span className="step-index">03</span><span className="section-label">FINDINGS & DECISIONS</span></div>{status==='complete'&&<div className="round3-tools"><button onClick={()=>{setRetrievalDialog(true);runRetrievalEvaluation()}}><SearchCheck size={14}/> Retrieval lab</button><button onClick={()=>setVersionDialog({mode:'history'})}><History size={14}/> History <span>{versions.length}</span></button></div>}</div>
           {status==='complete'&&<div className={`score-card ${findings.length?'has-findings':'is-clear'}`}><div className="score-ring" style={{'--score':`${score}%`}}><div><strong>{finalOutputEdited?'—':score}</strong><span>RULE<br/>SCORE</span></div></div><div className="score-copy"><small className="score-eyebrow">{finalOutputEdited?'COPY UPDATED':findings.length?(pendingFindings.length?'REVIEW RECOMMENDED':'REVIEW COMPLETE'):'GUIDELINES CHECKED'}</small><strong>{finalOutputEdited?'Recheck to refresh your score':findings.length?(pendingFindings.length?`${pendingFindings.length} suggestion${pendingFindings.length===1?'':'s'} to review`:'All suggestions reviewed'):'No conflicts found'}</strong><span>{finalOutputEdited?'The final copy changed after analysis. Run the check again to update its score and findings.':findings.length?(pendingFindings.length?'This estimate starts at 100 and drops for rule conflicts. Accept an edit to remove that issue from the score.':'Your choices are recorded; accepted edits are applied.'):'No conflicts found in the relevant approved rules.'}</span><small className="engine-label">Checked with {engine==='openai-structured'?'AI + guideline search':engine==='chromadb-rules'?'guideline search + rule match':engine==='chromadb-fallback'?'guideline search + fallback':engine==='browser-local'?'local rule check':'sample rule check'}</small></div><div className="score-sparkle"><Sparkles size={19}/></div></div>}
           {findings.length>0&&<div className="review-actions-row"><div className="review-summary"><span>{decidedCount===findings.length?<CheckCheck size={15}/>:<Clock3 size={15}/>} {decidedCount} of {findings.length} reviewed</span>{acceptedCount>0&&<span className="accepted-count"><Check size={13}/>{acceptedCount} accepted</span>}</div>{pendingFindings.length>0&&<button className="accept-all accept-all-top" onClick={applyAll} title="Apply every pending suggestion to the draft"><CheckCheck size={15}/> Accept all {pendingFindings.length} edits</button>}</div>}
           {findings.length===0&&status!=='complete'?<div className="review-empty"><div className="empty-orbit"><div className="orbit-dot dot-a"/><div className="orbit-dot dot-b"/><div className="orbit-center"><Sparkles size={22}/></div></div><strong>Your review starts here</strong><p>Once you analyze your draft, every suggestion will appear here with the exact rule behind it.</p><div className="empty-steps"><div><span>1</span> Analyze your draft</div><ArrowDown size={13}/><div><span>2</span> Review every suggestion</div><ArrowDown size={13}/><div><span>3</span> Decide what to change</div></div><div className="human-note"><ShieldCheck size={15}/> Your judgment always comes first</div></div>:null}
           {status==='complete'&&findings.length===0?<div className="success-card"><div><CheckCheck size={20}/></div><strong>No guideline conflicts found</strong><p>Your draft matches the relevant rules. Give it a final read and you’re ready to share.</p><button onClick={analyzeDraft}>Run check again <ArrowRight size={14}/></button></div>:null}
-          <div className="finding-list">{pendingFindings.map((f,index)=><article className="finding-card" key={f.id}><div className="finding-heading"><span className={`severity-dot severity-${f.severity}`}/><span className="finding-category">{f.category}</span><span className={`severity-label severity-text-${f.severity}`}>{f.severity}</span><span className="finding-number">{String(index+1).padStart(2,'0')}</span></div><p className="finding-explanation">{f.explanation}</p><div className="word-swap"><span className="word-old">{f.original_text}</span><ArrowRight size={14}/><span className="word-new">{f.suggested_text}</span></div><div className="citation"><span className="citation-mark">“</span><span><strong>From your guide</strong><br/>{f.guideline}<small className="citation-source">{f.source}</small></span></div><div className="decision-actions"><button className="reject-button" onClick={()=>decide(f,'rejected')}><X size={14}/> Reject</button><button className="accept-button" onClick={()=>decide(f,'accepted')}><Check size={14}/> Accept edit</button></div></article>)}</div>
+          <div className="finding-list">{pendingFindings.map((f,index)=><article className="finding-card" key={f.id}><div className="finding-heading"><span className={`severity-dot severity-${f.severity}`}/><span className="finding-category">{f.category}</span><span className={`severity-label severity-text-${f.severity}`}>{f.severity}</span><span className="finding-number">{String(index+1).padStart(2,'0')}</span></div><p className="finding-explanation">{f.explanation}</p><div className="word-swap"><span className="word-old">{f.original_text}</span><ArrowRight size={14}/><span className="word-new">{f.suggested_text}</span></div><div className="citation"><span className="citation-mark">“</span><span><strong>{f.citation_verified===false?'Source needs verification':'Exact rule verified'}</strong><br/>{f.guideline}<small className="citation-source">{f.source}</small><button className="source-inspect" onClick={()=>setSourceFinding(f)}><SearchCheck size={13}/> Inspect exact rule source</button></span></div><div className="decision-actions"><button className="reject-button" onClick={()=>decide(f,'rejected')}><X size={14}/> Reject</button><button className="accept-button" onClick={()=>decide(f,'accepted')}><Check size={14}/> Accept edit</button></div></article>)}</div>
           {reviewedFindings.length>0&&<div className="decision-log"><div className="decision-log-title">DECISIONS <span>{reviewedFindings.length}</span></div>{reviewedFindings.map(f=><div className={`decision-log-row ${decisions[f.id]}`} key={f.id}><span>{decisions[f.id]==='accepted'?<Check size={13}/>:<X size={13}/>}</span><div><strong>{decisions[f.id]==='accepted'?'Accepted':'Rejected'}</strong><small>{f.original_text}{decisions[f.id]==='accepted'?` → ${f.suggested_text}`:' · left unchanged'}</small></div><button onClick={()=>undoDecision(f)}>Undo</button></div>)}</div>}
           {findings.length>0&&decidedCount===findings.length&&<div className="review-done"><ShieldCheck size={17}/><span>Review complete. The final copy is yours.</span></div>}
           <div className="powered-note"><span className="powered-line"/> grounded in your rules <span className="powered-line"/></div>
@@ -195,8 +233,12 @@ function App() {
       </main>
       <footer className="page-footer"><span>BRANDGUARD AI <span>·</span> AI PRECISION, HUMAN JUDGMENT</span><span>Smart guardrails for your brand’s voice <span className="footer-star">✳</span></span></footer>
     </div>
+    {sourceFinding&&<div className="feature-backdrop" onClick={()=>setSourceFinding(null)}><section className="feature-dialog source-dialog" role="dialog" aria-modal="true" aria-labelledby="source-title" onClick={e=>e.stopPropagation()}><button className="modal-close" onClick={()=>setSourceFinding(null)} aria-label="Close source verification"><X size={17}/></button><div className="feature-kicker"><SearchCheck size={15}/> SOURCE SPAN VERIFICATION</div><h2 id="source-title">Exact rule from your guide</h2><p className="feature-description">This citation is checked against the retrieved guideline text before it is shown as verified.</p><div className="source-proof"><span className="source-proof-state"><Check size={13}/> {sourceFinding.citation_verified===false?'Needs review':'Exact text match'}</span><small>{sourceFinding.source}</small><blockquote><mark>{sourceFinding.guideline}</mark></blockquote><div className="source-offset">Verified citation span · characters {sourceFinding.source_start??0}–{sourceFinding.source_end??sourceFinding.guideline.length}</div></div><div className="source-draft-match"><strong>Draft phrase flagged</strong><span>{sourceFinding.original_text} <ArrowRight size={13}/> {sourceFinding.suggested_text}</span></div></section></div>}
+    {versionDialog&&<div className="feature-backdrop" onClick={()=>setVersionDialog(null)}><section className={`feature-dialog ${versionDialog.mode==='compare'?'compare-dialog':''}`} role="dialog" aria-modal="true" aria-labelledby="history-title" onClick={e=>e.stopPropagation()}><button className="modal-close" onClick={()=>setVersionDialog(null)} aria-label="Close version history"><X size={17}/></button>{versionDialog.mode==='history'?<><div className="feature-kicker"><History size={15}/> VERSIONED REVIEW HISTORY</div><h2 id="history-title">Your draft versions</h2><p className="feature-description">Saved locally on this device before each analysis or review decision.</p>{versions.length===0?<div className="history-empty">Your first version will be saved when you analyze a draft.</div>:<div className="history-list">{versions.map(version=><article className="history-item" key={version.id}><div><strong>{version.label}</strong><small>{new Date(version.createdAt).toLocaleString()} · {(version.draft||'').trim().split(/\s+/).filter(Boolean).length} words</small><p>{version.draft.slice(0,150)}{version.draft.length>150?'…':''}</p></div><div className="history-item-actions"><button onClick={()=>setVersionDialog({mode:'compare',version})}>Compare</button><button className="history-restore" onClick={()=>restoreVersion(version)}><RotateCcw size={13}/> Restore</button></div></article>)}</div>}</>:<><div className="feature-kicker"><History size={15}/> VERSION COMPARISON</div><h2 id="history-title">Compare with this draft</h2><div className="compare-columns"><div><span>Saved version · {new Date(versionDialog.version.createdAt).toLocaleString()}</span><pre>{versionDialog.version.draft||'(empty draft)'}</pre></div><div><span>Current draft</span><pre>{draft||'(empty draft)'}</pre></div></div><button className="compare-back" onClick={()=>setVersionDialog({mode:'history'})}><ArrowLeft size={14}/> Back to history</button></>}</section></div>}
+    {retrievalDialog&&<div className="feature-backdrop" onClick={()=>setRetrievalDialog(false)}><section className="feature-dialog retrieval-dialog" role="dialog" aria-modal="true" aria-labelledby="retrieval-title" onClick={e=>e.stopPropagation()}><button className="modal-close" onClick={()=>setRetrievalDialog(false)} aria-label="Close retrieval lab"><X size={17}/></button><div className="feature-kicker"><SearchCheck size={15}/> RETRIEVAL QUALITY BENCHMARK</div><h2 id="retrieval-title">Can the right rules be found?</h2><p className="feature-description">Each approved rule becomes a known-answer search case. The benchmark checks whether that rule appears in the top three results.</p>{retrievalBusy?<div className="retrieval-loading"><LoaderCircle className="spin" size={18}/> Evaluating {rules.length} guideline cases…</div>:retrievalReport?.error?<div className="history-empty">{retrievalReport.error}</div>:retrievalReport&&<><div className="retrieval-metrics"><div><span>MRR</span><strong>{retrievalReport.mrr}</strong><small>rank quality</small></div><div><span>Recall @ 3</span><strong>{Math.round(retrievalReport.recall_at_3*100)}%</strong><small>rules found in top three</small></div><div><span>Test cases</span><strong>{retrievalReport.case_count}</strong><small>{retrievalReport.mode}</small></div></div><div className="retrieval-table"><div className="retrieval-table-head"><span>Search query</span><span>Expected rule rank</span></div>{retrievalReport.cases.map((row,i)=><div className="retrieval-row" key={`${i}-${row.expected_chunk}`}><span>{row.query}</span><strong className={row.rank?'retrieval-hit':'retrieval-miss'}>{row.rank?`#${row.rank} · found`:'Not in top 3'}</strong></div>)}</div><button className="retrieval-rerun" onClick={runRetrievalEvaluation}><RotateCcw size={13}/> Run benchmark again</button></>}</section></div>}
     {showHelp&&<div className="help-backdrop" onClick={()=>setShowHelp(false)}><section className="help-dialog" role="dialog" aria-modal="true" aria-labelledby="help-title" onClick={e=>e.stopPropagation()}><div className="help-dialog-head"><span className="help-icon"><ShieldCheck size={18}/></span><button className="modal-close" aria-label="Close help" onClick={()=>setShowHelp(false)}><X size={17}/></button></div><p className="eyebrow help-eyebrow">A QUICK WALKTHROUGH</p><h2 id="help-title">Your brand guide.<br/><em>Your final call.</em></h2><div className="help-step"><span>01</span><div><strong>Start with approved rules</strong><p>Your manager’s brand guidelines are already loaded in this workspace.</p></div></div><div className="help-step"><span>02</span><div><strong>Add your content</strong><p>Paste a draft or upload a .txt or .md script, then analyze it.</p></div></div><div className="help-step"><span>03</span><div><strong>Review and export</strong><p>Accept or reject every suggestion. Then edit the final copy and download it as TXT or Word.</p></div></div><div className="help-dialog-foot"><ShieldCheck size={15}/> You make the final call on every change.</div></section></div>}
   </div>
 }
 
 export default App
+

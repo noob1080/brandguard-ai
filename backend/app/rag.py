@@ -149,3 +149,28 @@ def retrieve(query: str, top_k: int = 3) -> list[dict]:
          "chunk": (meta or {}).get("chunk", index + 1)}
         for index, (doc, meta) in enumerate(zip(docs, metas))
     ]
+
+
+def evaluate_retrieval(cases: list[dict], top_k: int = 3) -> dict:
+    """Measure whether known guideline chunks appear in the top-k Chroma results."""
+    rows = []
+    reciprocal_ranks = []
+    hits = 0
+    for case in cases:
+        query = str(case.get("query", "")).strip()
+        expected_chunk = case.get("expected_chunk")
+        if not query or expected_chunk is None:
+            continue
+        results = retrieve(query, top_k)
+        rank = next((i + 1 for i, rule in enumerate(results)
+                     if str(rule.get("chunk")) == str(expected_chunk)), None)
+        reciprocal_ranks.append(1 / rank if rank else 0)
+        hits += int(rank is not None and rank <= top_k)
+        rows.append({"query": query, "expected_chunk": expected_chunk, "rank": rank,
+                     "retrieved": [{"chunk": rule["chunk"], "text": rule["text"]}
+                                   for rule in results]})
+    count = len(rows)
+    return {"cases": rows, "case_count": count,
+            "mrr": round(sum(reciprocal_ranks) / count, 3) if count else 0,
+            "recall_at_3": round(hits / count, 3) if count else 0}
+

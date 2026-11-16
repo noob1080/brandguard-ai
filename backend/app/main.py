@@ -6,8 +6,8 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from .analyzer import analyze
-from .models import AnalyzeRequest, AnalyzeResponse, IngestResponse
-from .rag import load_guidelines, save_guidelines
+from .models import AnalyzeRequest, AnalyzeResponse, IngestResponse, RetrievalEvalRequest
+from .rag import evaluate_retrieval, load_guidelines, save_guidelines
 
 load_dotenv()
 
@@ -60,3 +60,11 @@ def analyze_draft(request: AnalyzeRequest):
     if not load_guidelines():
         raise HTTPException(409, "Upload or load a brand guide before analyzing a draft.")
     return analyze(request.draft, request.top_k)
+
+
+@app.post("/api/evaluate-retrieval")
+def evaluate_guideline_retrieval(request: RetrievalEvalRequest):
+    if not load_guidelines():
+        raise HTTPException(409, "Upload or load a brand guide before evaluating retrieval.")
+    return evaluate_retrieval([case.model_dump() for case in request.cases], request.top_k)
+

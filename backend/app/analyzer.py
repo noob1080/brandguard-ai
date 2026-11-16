@@ -69,6 +69,8 @@ DRAFT:
             "original_text": draft[match.start():match.end()], "suggested_text": item.suggested_text,
             "explanation": item.issue, "guideline": item.citation,
             "source": _source_for(item.citation, retrieved), "start": match.start(), "end": match.end(),
+            "citation_verified": item.citation in allowed_rules,
+            "source_start": 0, "source_end": len(item.citation),
         })
     return _dedupe_and_order(findings)
 
@@ -147,7 +149,8 @@ def _finding(draft: str, start: int, end: int, suggestion: str, category: str,
     return {"id": str(uuid4()), "category": category, "severity": severity,
             "original_text": draft[start:end], "suggested_text": suggestion,
             "explanation": explanation, "guideline": rule["text"],
-            "source": f"{rule['source']} · rule {rule['chunk']}", "start": start, "end": end}
+            "source": f"{rule['source']} · rule {rule['chunk']}", "start": start, "end": end,
+            "citation_verified": True, "source_start": 0, "source_end": len(rule["text"])}
 
 
 def _source_for(citation: str, retrieved: list[dict]) -> str:
@@ -173,3 +176,4 @@ def _response(findings: list[dict], retrieved: list[dict], summary: str | None =
                    if findings else "No issues found in the retrieved guidelines. Your draft is ready for a human review.")
     return {"findings": findings, "retrieved_guidelines": retrieved, "score": score,
             "summary": summary, "engine": engine or "chromadb-rules"}
+
